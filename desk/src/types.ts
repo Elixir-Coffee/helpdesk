@@ -247,7 +247,6 @@ export interface AutoCompleteItem {
 export interface Field {
   fieldname: string;
   fieldtype: string;
-  hide_from_customer?: 0 | 1;
   label: string;
   options: string;
   required: 0 | 1;
@@ -335,9 +334,9 @@ export type TicketTab =
   | "analytics";
 
 export interface TabObject {
-  name: TicketTab;
+  value: TicketTab;
   label: string;
-  icon: Component;
+  iconLeft: Component;
   condition?: () => boolean;
 }
 
@@ -395,6 +394,7 @@ export interface View {
   pinned?: boolean;
   public?: boolean;
   group_by_field?: string;
+  list_group_by?: string;
   name: string;
   is_customer_portal?: boolean;
 }
@@ -501,11 +501,11 @@ export interface DocumentResource<T = unknown> {
 }
 
 export interface Customizations {
-  custom_fields: {
+  fields: {
     fieldname: string;
-    required: number;
-    placeholder: string;
-    url_method: string;
+    required?: number;
+    placeholder?: string;
+    url_method?: string;
   }[];
   _form_script: string[];
   _customActions?: any;

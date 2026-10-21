@@ -1,7 +1,9 @@
 import {
   CleanStyles,
   ComponentUtils,
+  DismissSuggestionsOnOutsideClick,
   HandleExcelPaste,
+  PreserveWhitespace,
 } from "@/tiptap-extensions";
 import {
   AlignCenter,
@@ -27,15 +29,10 @@ import {
   Strike,
   commentToolbar,
   type CommandMenuItem,
+  type MentionSuggestionItem,
   type MenuItem,
 } from "frappe-ui/editor";
 import type { MaybeRefOrGetter } from "vue";
-
-/** A mentionable agent as the new editor expects it: `{ id, label }`. */
-export interface MentionItem {
-  id: string;
-  label: string;
-}
 
 /**
  * Build the extension list for a Helpdesk rich-text editor.
@@ -45,12 +42,14 @@ export interface MentionItem {
  */
 export function buildEditorExtensions(
   options: {
-    mentions?: MaybeRefOrGetter<MentionItem[]>;
+    mentions?: MaybeRefOrGetter<MentionSuggestionItem[]>;
     extra?: unknown[];
   } = {}
 ) {
   const kit = RichTextKit.configure({
     heading: { levels: [2, 3, 4, 5, 6] },
+    // rc.1 ships the table-of-contents node off; helpdesk editors had it.
+    toc: {},
     ...(options.mentions ? { mention: { items: options.mentions } } : {}),
   });
   return [
@@ -58,6 +57,8 @@ export function buildEditorExtensions(
     ComponentUtils,
     HandleExcelPaste,
     CleanStyles,
+    DismissSuggestionsOnOutsideClick,
+    PreserveWhitespace,
     ...(options.extra ?? []),
   ];
 }

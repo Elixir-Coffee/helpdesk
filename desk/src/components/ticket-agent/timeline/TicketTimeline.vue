@@ -1,79 +1,89 @@
 <template>
-  <ActivityHeader :title="tabLabel" />
-  <TimelineContainer>
-    <ActivityTimeline
-      ref="timelineRef"
-      class="px-5 pt-1 pb-6"
-      :activities="filtered"
-      :loading="_loading"
-      :paginate="paginate"
-    >
-      <template #empty>
-        <div
-          class="flex h-full flex-col items-center justify-center gap-2 text-ink-gray-4"
-        >
-          <component :is="emptyIcon" class="size-6" />
-          <p class="text-p-base text-ink-gray-5">
-            {{ __("No {0} yet", [tabLabel]) }}
-          </p>
-        </div>
-      </template>
+  <div class="relative flex min-h-0 flex-1 flex-col">
+    <!-- floats over the feed, so pins coming and going never move the rows -->
+    <PinnedCommentsBar
+      class="absolute inset-x-0 top-0 z-10"
+      :comments="pinnedComments"
+      :jump="goToPinned"
+    />
+    <TimelineContainer ref="timelineContainer">
+      <ActivityTimeline
+        ref="timelineRef"
+        class="px-5 pb-6"
+        :class="pinnedComments.length ? 'scroll-pt-14 pt-14' : 'pt-5'"
+        :activities="filtered"
+        :loading="_loading"
+        :paginate="paginate"
+      >
+        <template #empty>
+          <div
+            class="flex h-full flex-col items-center justify-center gap-2 text-ink-gray-4"
+          >
+            <component :is="emptyIcon" class="size-6" />
+            <p class="text-p-base text-ink-gray-5">
+              {{ __("No {0} yet", [tabLabel]) }}
+            </p>
+          </div>
+        </template>
 
-      <!-- reuse the framework row, bolding tag names alongside the actor -->
-      <template #item-log="{ activity }">
-        <LogItem :activity="withTagNamesBold(activity)" />
-      </template>
+        <!-- reuse the framework row, bolding tag names alongside the actor -->
+        <template #item-log="{ activity }">
+          <LogItem :activity="withTagNamesBold(activity)" />
+        </template>
 
-      <template #item-comment="{ activity }">
-        <TimelineCommentRow
-          :activity="activity"
-          :extras="extrasFor(activity.data.name)"
-          @update="refresh"
-        />
-      </template>
+        <template #item-comment="{ activity }">
+          <TimelineCommentRow
+            :activity="activity"
+            :extras="extrasFor(activity)"
+            :pinned="pinnedNames.has(activity.data.name)"
+            :pin-count="pinnedNames.size"
+            @update="refresh"
+          />
+        </template>
 
-      <template #item-email="{ activity }">
-        <EmailItem :email="withEmailFixups(activity)">
-          <template #actions>
-            <Button
-              variant="ghost"
-              :tooltip="__('Reply')"
-              @click="reply(activity)"
-            >
-              <template #icon><ReplyIcon class="text-ink-gray-7" /></template>
-            </Button>
-            <Button
-              variant="ghost"
-              :tooltip="__('Reply All')"
-              @click="replyAll(activity)"
-            >
-              <template #icon
-                ><ReplyAllIcon class="text-ink-gray-7"
-              /></template>
-            </Button>
-            <Dropdown placement="right" :options="emailOptions(activity)">
+        <template #item-email="{ activity }">
+          <EmailItem :email="withEmailFixups(activity)">
+            <template #actions>
               <Button
-                icon="lucide-more-horizontal"
-                class="!text-ink-gray-7"
                 variant="ghost"
-              />
-            </Dropdown>
-          </template>
-        </EmailItem>
-      </template>
+                :tooltip="__('Reply')"
+                @click="reply(activity)"
+              >
+                <template #icon><ReplyIcon class="text-ink-gray-7" /></template>
+              </Button>
+              <Button
+                variant="ghost"
+                :tooltip="__('Reply All')"
+                @click="replyAll(activity)"
+              >
+                <template #icon
+                  ><ReplyAllIcon class="text-ink-gray-7"
+                /></template>
+              </Button>
+              <Dropdown align="end" :options="emailOptions(activity)">
+                <Button
+                  icon="lucide-more-horizontal"
+                  class="!text-ink-gray-7"
+                  variant="ghost"
+                />
+              </Dropdown>
+            </template>
+          </EmailItem>
+        </template>
 
-      <template #item-call="{ activity }">
-        <CallArea :activity="activity.data" />
-      </template>
-      <template #icon-call="{ activity }">
-        <LucidePhoneIncoming
-          v-if="activity.data.call_type === 'Incoming'"
-          class="size-4 text-ink-gray-5"
-        />
-        <LucidePhoneOutgoing v-else class="size-4 text-ink-gray-5" />
-      </template>
-    </ActivityTimeline>
-  </TimelineContainer>
+        <template #item-call="{ activity }">
+          <CallArea :activity="activity.data" />
+        </template>
+        <template #icon-call="{ activity }">
+          <LucidePhoneIncoming
+            v-if="activity.data.call_type === 'Incoming'"
+            class="size-4 text-ink-gray-5"
+          />
+          <LucidePhoneOutgoing v-else class="size-4 text-ink-gray-5" />
+        </template>
+      </ActivityTimeline>
+    </TimelineContainer>
+  </div>
   <TicketSplitModal
     :modelValue="Boolean(splitCommunication)"
     @update:modelValue="splitCommunication = ''"
@@ -101,6 +111,9 @@ const VERSION_FIELDS = [
 // tab instances don't refetch the same row
 const enrichedRows = new Set<string>();
 
+// clicking the pinned bar scrolls the feed to that comment over this long
+const PIN_JUMP_MS = 300;
+
 export const SHARED_VISIBLE_TYPES: VisibleTypes = [
   "email",
   "comment",
@@ -119,9 +132,12 @@ import {
   ReplyAllIcon,
   ReplyIcon,
 } from "@/components/icons";
-import ActivityHeader from "@/components/ticket/ActivityHeader.vue";
 import TicketSplitModal from "@/components/ticket/TicketSplitModal.vue";
-import { registerTicketFeed, useTicket } from "@/composables/useTicket";
+import {
+  registerTicketFeed,
+  useTicket,
+  type PinnedComment,
+} from "@/composables/useTicket";
 import { useAuthStore } from "@/stores/auth";
 import { globalStore } from "@/stores/globalStore";
 import { useUserStore } from "@/stores/user";
@@ -135,6 +151,7 @@ import {
   TimelineContainer,
   useActivityTimeline,
   type Activity,
+  type CommentActivity,
   type CustomActivity,
   type EmailActivity,
   type LogActivity,
@@ -152,6 +169,8 @@ import {
 } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import LucideSplit from "~icons/lucide/split";
+import { glideToRow } from "./glideToRow";
+import PinnedCommentsBar from "./PinnedCommentsBar.vue";
 import TimelineCommentRow, { CommentExtras } from "./TimelineCommentRow.vue";
 
 const props = defineProps<{
@@ -171,6 +190,8 @@ const ticket = inject(TicketSymbol)!;
 const splitCommunication = ref("");
 const timelineRef =
   useTemplateRef<InstanceType<typeof ActivityTimeline>>("timelineRef");
+const timelineContainer =
+  useTemplateRef<InstanceType<typeof TimelineContainer>>("timelineContainer");
 
 const { activities, loading, paginate, reload } = useActivityTimeline(
   "HD Ticket",
@@ -179,6 +200,20 @@ const { activities, loading, paginate, reload } = useActivityTimeline(
 );
 
 const { calls, commentExtras: extras } = useTicket(props.ticketId);
+const pinnedNames = computed(() => new Set(extras.data?.pinned_comments ?? []));
+// the feed already holds every comment, so the bar reads their text from it
+const pinnedComments = computed<PinnedComment[]>(() => {
+  const contents = new Map(
+    activities.value
+      .filter(
+        (activity): activity is CommentActivity => activity.type === "comment"
+      )
+      .map((activity) => [activity.data.name, activity.data.content])
+  );
+  return (extras.data?.pinned_comments ?? [])
+    .filter((name) => contents.has(name))
+    .map((name) => ({ name, content: contents.get(name) as string }));
+});
 
 const _loading = computed(() => loading.value || calls.loading);
 
@@ -233,13 +268,42 @@ function emailOptions(activity: EmailActivity) {
   ];
 }
 
-function extrasFor(comment: string): CommentExtras {
-  return extras.data?.[comment] ?? { reactions: [], attachments: [] };
+function extrasFor(activity: CommentActivity): CommentExtras {
+  // a pending comment has no name yet, so its attachments ride on the row
+  if (activity.pending)
+    return { reactions: [], attachments: activity.data.attachments ?? [] };
+  return (
+    extras.data?.comments[activity.data.name] ?? {
+      reactions: [],
+      attachments: [],
+    }
+  );
 }
 
 function refresh() {
   reload();
   extras.reload();
+}
+
+// Emails and Calls feeds hold no comments, so the jump lands on Comments
+// resolves once the row is on screen, so the pinned bar advances after the jump
+async function goToPinned(name: string) {
+  const scroller = feedScroller();
+  // Emails and Calls feeds hold no comments; the Comments tab takes the deep link
+  if (!["activity", "comment"].includes(props.tab) || !scroller) {
+    router.replace({
+      query: { ...route.query, highlight: `comment-${name}` },
+      hash: "#comment",
+    });
+    return;
+  }
+  await glideToRow(scroller, `comment:${name}`, PIN_JUMP_MS);
+  timelineRef.value?.scrollToRow(`comment:${name}`);
+}
+
+function feedScroller() {
+  const container = timelineContainer.value?.$el as HTMLElement | undefined;
+  return container?.querySelector<HTMLElement>(".activity-timeline");
 }
 
 // after send/comment the newest row belongs on screen (old feed parity)
@@ -345,29 +409,43 @@ function splitRecipients(
 
 // deep links arrive as ?highlight=comment-<name> / communication-<name>;
 // framework row ids are comment:<name> / email:<name>
-function scrollToHighlight() {
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+
+// The row can reach the DOM a few renders after the feed resolves, so a single
+// attempt lands only if it happens to be the last one. Keep trying instead; the
+// link stays in the URL until it does, which is also what stops the retries.
+// ponytail: 2s of polling, enough for any feed we render; a MutationObserver on
+// the timeline would be the exact version if that ever stops being true.
+function scrollToHighlight(attemptsLeft = 20) {
+  clearTimeout(highlightTimer);
   const raw = route.query.highlight;
   if (typeof raw !== "string") return;
   const rowId = raw
     .replace(/^comment-/, "comment:")
     .replace(/^communication-/, "email:");
-  nextTick(() => {
-    // false means the row is not rendered yet; keep ?highlight for the next tick
-    if (!timelineRef.value?.scrollToRow(rowId)) return;
+  if (timelineRef.value?.scrollToRow(rowId)) {
     const query = { ...route.query };
     delete query.highlight;
     router.replace({ query, hash: route.hash });
-  });
+    return;
+  }
+  if (attemptsLeft)
+    highlightTimer = setTimeout(() => scrollToHighlight(attemptsLeft - 1), 100);
 }
 
-// opening at the newest row is the timeline's own job (useTimelineScroll)
+// opening at the newest row is the timeline's own job (useTimelineScroll).
+// immediate + post: a deep link that is already settled on arrival still fires,
+// and a fire that follows a render sees the rows it produced.
 watch(
   () => [route.query.highlight, _loading.value, filtered.value.length],
   () => {
     if (_loading.value || !route.query.highlight) return;
     scrollToHighlight();
-  }
+  },
+  { flush: "post", immediate: true }
 );
+
+onBeforeUnmount(() => clearTimeout(highlightTimer));
 
 // the socket payload can't carry attachments (they live on File, joined
 // server-side), so a live comment renders bare; fetch its files and patch
@@ -393,11 +471,29 @@ async function enrichLiveComment(payload: unknown) {
     filters: { attached_to_doctype: "Comment", attached_to_name: name },
     fields: ["file_name", "file_url", "is_private"],
   });
-  if (!files?.length || !extras.data) return;
-  extras.data[name] = {
-    ...(extras.data[name] ?? { reactions: [] }),
-    attachments: files,
+  // an inline image is attached so readers can load it, but it is not a chip
+  const content = String(doc.content ?? "");
+  const attachments = files?.filter(
+    (f: { file_url: string }) => !content.includes(f.file_url)
+  );
+  if (!attachments?.length || !extras.data) return;
+  extras.data.comments[name] = {
+    ...(extras.data.comments[name] ?? { reactions: [] }),
+    attachments,
   };
+}
+
+// another agent pinned, unpinned, edited or deleted a pinned comment
+function reloadPinsOnChange(payload: unknown) {
+  const { doc, key, action } = (payload ?? {}) as {
+    doc?: Record<string, unknown>;
+    key?: string;
+    action?: string;
+  };
+  if (key !== "comments" || action === "add") return;
+  if (doc?.reference_name !== props.ticketId) return;
+  if (doc.is_pinned || pinnedNames.value.has(doc.name as string))
+    extras.reload();
 }
 
 let unregisterFeed: () => void;
@@ -411,12 +507,14 @@ onMounted(() => {
     }
   );
   $socket.on("docinfo_update", enrichLiveComment);
+  $socket.on("docinfo_update", reloadPinsOnChange);
 });
 
 onBeforeUnmount(() => {
   unregisterFeed?.();
   $socket.off("helpdesk:comment-reaction-update");
   $socket.off("docinfo_update", enrichLiveComment);
+  $socket.off("docinfo_update", reloadPinsOnChange);
 });
 
 defineExpose({ reload: refreshAndScroll });

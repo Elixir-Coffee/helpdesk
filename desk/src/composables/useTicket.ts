@@ -1,5 +1,6 @@
 import type { TicketAnalytics } from "@/components/ticket-agent/analytics/types";
 import type { CommentExtras } from "@/components/ticket-agent/timeline/TimelineCommentRow.vue";
+import { useNotificationStore } from "@/stores/notification";
 import { __ } from "@/translation";
 import type {
   DocumentResource,
@@ -20,9 +21,20 @@ interface MapValue {
   analytics: Resource<TicketAnalytics>;
   // shared by every timeline tab instance, fetched once per ticket
   calls: Resource<Record<string, any>[]>;
-  commentExtras: Resource<Record<string, CommentExtras>>;
+  commentExtras: Resource<TicketCommentExtras>;
   // lent by the mounted timeline; see registerTicketFeed
   reloadFeed?: () => void;
+}
+
+export interface TicketCommentExtras {
+  comments: Record<string, CommentExtras>;
+  // oldest first, so a pin's position is its "N:" in the pinned bar
+  pinned_comments: string[];
+}
+
+export interface PinnedComment {
+  name: string;
+  content: string;
 }
 
 const ticketMap: Record<string, MapValue> = reactive({});
@@ -34,7 +46,11 @@ export const useTicket = (ticketId: string): MapValue => {
         doctype: "HD Ticket",
         name: ticketId,
         whitelistedMethods: {
-          markSeen: "mark_seen",
+          markSeen: {
+            method: "mark_seen",
+            onSuccess: (cleared: number) =>
+              cleared && useNotificationStore().controller.reload(),
+          },
         },
         setValue: {
           onSuccess: () => {
